@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::{atomic::AtomicU64, OnceLock}};
+use std::collections::HashMap;
 
 use crate::{hold::obj::Obj, projectiles::Projectile};
 

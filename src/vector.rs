@@ -14,3 +14,8 @@ pub fn dist2(x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
 
     dot(x, y, x, y)
 }
+
+pub fn norm(x: f64, y: f64, len: f64) -> (f64, f64) {
+    let r = (x * x + y * y).sqrt();
+    (x / r * len, y / r * len)
+}

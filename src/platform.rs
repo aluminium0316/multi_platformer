@@ -1,18 +1,26 @@
 use macroquad::prelude::*;
 use rand::rand;
 
-use crate::vector::{dist2, dot, proj};
+use crate::{vector::{dist2, dot, proj}, Scene};
+
+#[derive(Clone)]
+pub enum LineType {
+    Normal,
+    End, 
+    Ice,
+}
 
 struct Line {
     x1: f64,
     y1: f64,
     x2: f64,
     y2: f64,
+    linetype: LineType,
 }
 
 impl Line {
-    pub fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
-        Self { x1, y1, x2, y2 }
+    pub fn new(x1: f64, y1: f64, x2: f64, y2: f64, linetype: LineType) -> Self {
+        Self { x1, y1, x2, y2, linetype }
     }
 }
 
@@ -27,11 +35,14 @@ impl Platform {
         let mut lines = Vec::new();
 
         for i in 0..16 {
-            lines.push(Line::new(rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0));
+            lines.push(Line::new(rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, LineType::Normal));
             if lines[i].x2 < lines[i].x1 {
                 (lines[i].x1, lines[i].x2) = (lines[i].x2, lines[i].x1);
             }
         }
+
+        rand();
+        lines.push(Line::new(rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, LineType::End));
 
         Self {
             x: 0.0,
@@ -41,12 +52,17 @@ impl Platform {
     }
     pub fn render(&self) {
         for line in self.lines.iter() {
-            draw_line(line.x1 as f32, line.y1 as f32, line.x2 as f32, line.y2 as f32, 1.0, RED);
+            draw_line(line.x1 as f32, line.y1 as f32, line.x2 as f32, line.y2 as f32, 1.0, match line.linetype {
+                LineType::Normal => RED,
+                LineType::End => GREEN,
+                LineType::Ice => SKYBLUE,
+            });
         }
     }
 
-    pub fn collide(&self, mut x: f64, mut y: f64, r: f64, mut vx: f64, mut vy: f64) -> (f64, f64, f64, f64, bool, f64, f64) {
+    pub fn collide(&self, mut x: f64, mut y: f64, r: f64, mut vx: f64, mut vy: f64) -> (f64, f64, f64, f64, bool, f64, f64, Vec<LineType>) {
         let mut collision = false;
+        let mut linetypes = Vec::new();
         let mut nx1 = 0.0;
         let mut ny1 = 0.0;
         for line in self.lines.iter() {
@@ -71,12 +87,13 @@ impl Platform {
 
                     (vx, vy) = proj(vx, vy, line.x2 - line.x1, line.y2 - line.y1);
                     collision = true;
+                    linetypes.push(line.linetype.clone());
                 }
             }
         }
 
         let r = (nx1 * nx1 + ny1 * ny1).sqrt();
 
-        (x, y, vx, vy, collision, nx1 / r, ny1 / r)
+        (x, y, vx, vy, collision, nx1 / r, ny1 / r, linetypes)
     }
 }

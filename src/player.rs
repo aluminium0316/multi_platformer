@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use macroquad::prelude::*;
 
-use crate::{entity::Entity, hold::obj::Obj, input::Input, key, platform::Platform, projectiles::Projectile, vector::dist2};
+use crate::{entity::Entity, hold::obj::Obj, input::Input, key, platform::{LineType, Platform}, projectiles::Projectile, vector::{dist2, proj}, Scene};
 
 pub struct Player {
     x: f64,
@@ -31,7 +31,7 @@ impl Player {
         }
     }
 
-    pub fn update(&mut self, id: u64, input: &mut Input, platforms: &mut HashMap<u64, Platform>, objs: &mut HashMap<u64, &mut dyn Obj>, projectiles: &mut HashMap<u64, &mut dyn Projectile>) {
+    pub fn update(&mut self, id: u64, input: &mut Input, platforms: &mut HashMap<u64, Platform>, objs: &mut HashMap<u64, &mut dyn Obj>, projectiles: &mut HashMap<u64, &mut dyn Projectile>, scene: &mut Scene) {
 
         self.vy += 1.0 / 256.0;
         if self.vy > 8.0 {
@@ -115,7 +115,7 @@ impl Player {
             self.hold = None;
         }
         if input.down[key!(J)] < 16 {
-            let nearest = <dyn Obj>::nearest(objs, self.x, self.y - 4.0, 256.0, id);
+            let nearest = <dyn Obj>::nearest(objs, self.x, self.y, 256.0, id);
             self.hold = nearest;
             if let Some(id) = nearest {
                 input.down[key!(J)] = 16;
@@ -131,7 +131,7 @@ impl Player {
         self.ground += 1;
 
         for (_id, platform) in platforms {
-            let (x, y, vx, vy, collided, nx, ny) = platform.collide(self.x, self.y, 4.0, self.vx, self.vy);
+            let (x, y, vx, vy, collided, nx, ny, linetypes) = platform.collide(self.x, self.y, 4.0, self.vx, self.vy);
             if collided {
                 self.x = x;
                 self.y = y;
@@ -140,6 +140,13 @@ impl Player {
                 self.nx = nx;
                 self.ny = ny;
                 self.ground = 0;
+                for linetype in linetypes {
+                    if let LineType::End = linetype {
+                        *scene = Scene::End {
+                            winner: format!("Winner: {}", id)
+                        };
+                    }
+                }
             }
         }
 
@@ -173,9 +180,9 @@ impl Player {
         })
     }
 
-    pub fn hold(&mut self, other: u64) where{
-        self.hold = Some(other);
-    }
+    // pub fn hold(&mut self, other: u64) {
+    //     self.hold = Some(other);
+    // }
 
     pub fn pos(&self) -> (f64, f64) {
         (self.x, self.y)
@@ -184,6 +191,11 @@ impl Player {
     pub fn throw(&mut self, vx: f64, vy: f64) {
         self.vx += vx;
         self.vy += vy;
+    }
+    pub fn collide(&mut self, vx: f64, vy: f64) {
+        self.x += vx;
+        self.y += vy;
+        (self.vx, self.vy) = proj(self.vx, self.vy, -vy, vx);
     }
 }
 

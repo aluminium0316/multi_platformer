@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{entity::Entity, platform::Platform, vector::dist2};
+use crate::{entity::Entity, platform::Platform, projectiles::Projectile, vector::{dist2, norm}};
 
 use super::obj::Obj;
 use macroquad::prelude::*;
@@ -36,7 +36,7 @@ impl Stone {
         self.ground += 1;
 
         for (_id, platform) in platforms {
-            let (x, y, vx, vy, collided, _nx, _ny) = platform.collide(self.x, self.y, 4.0, self.vx, self.vy);
+            let (x, y, vx, vy, collided, _nx, _ny, _) = platform.collide(self.x, self.y, 4.0, self.vx, self.vy);
             if collided {
                 self.x = x;
                 self.y = y;
@@ -78,5 +78,22 @@ impl Obj for Stone {
 impl Entity<'_> for Stone {
     fn as_obj(&mut self) -> Option<&mut dyn Obj> {
         Some(self)
+    }
+    fn as_proj(&mut self) -> Option<&mut dyn Projectile> {
+        Some(self)
+    }
+}
+
+impl Projectile for Stone {
+    fn collision(&mut self, player: &mut crate::player::Player) {
+        let (x, y) = player.pos();
+        let d = dist2(x, y, self.x, self.y);
+        let (vx, vy) = norm(x - self.x, y - self.y, 0.25);
+        if d < 16.0 {
+            // player.throw(vx, vy);
+            player.collide(vx, vy);
+            // self.vx -= vx;
+            // self.vy -= vy;
+        }
     }
 }
