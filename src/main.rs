@@ -4,27 +4,50 @@ mod platform;
 mod vector;
 mod projectiles;
 mod hold;
+mod entity;
+mod spawners;
 
+use std::{collections::HashMap, sync::atomic::AtomicU64};
+
+use entity::Entities;
+use hold::stone::Stone;
 use input::Input;
 use macroquad::prelude::*;
 use platform::Platform;
 use player::Player;
-use rand::rand;
+use projectiles::damage;
+use spawners::cannon::{self, Cannon};
 
 fn window_conf() -> Conf {
     Conf {
         window_title: "43".to_owned(),
+        window_width: 768,
+        window_height: 576,
         ..Default::default()
     }
+}
+
+static MAX_ID: AtomicU64 = AtomicU64::new(0);
+pub fn new_id() -> u64 {
+    // println!("{:?}", MAX_ID);
+    MAX_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
 }
 
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut input = Input::new();
-    let player_id = ((rand() as u64) << 32) | rand() as u64;
-    let mut players = vec![Player::new(player_id), Player::new(12)];
+    let mut players = HashMap::new();
+    let mut platforms = HashMap::new();
+    let mut stones = HashMap::new();
+    let mut damages = HashMap::new();
+    let mut cannons = HashMap::new();
+    players.insert(new_id(), Player::new());
+    platforms.insert(new_id(), Platform::new());
+    stones.insert(new_id(), Stone::new(0.0, 0.0));
+    cannons.insert(new_id(), Cannon::new(0.0, -128.0));
 
-    let mut platforms = vec![Platform::new()];
+    let mut entities: Entities = Entities(HashMap::new());
+
     let target = render_target(256, 192);
     target.texture.set_filter(FilterMode::Nearest);
 
@@ -34,8 +57,11 @@ async fn main() {
     let mut dt = 0;
     let fps = 240;
     let mut ticks = 0;
-    let assets: Vec<Texture2D> = vec![
-        // load_texture("assets/player.png").await.unwrap(),
+    let assets = vec![
+        load_texture("assets/player.png").await.unwrap(),
+        load_texture("assets/stone.png").await.unwrap(),
+        load_texture("assets/cannon.png").await.unwrap(),
+        load_texture("assets/orb.png").await.unwrap(),
     ];
 
     for asset in &assets {
@@ -60,8 +86,29 @@ async fn main() {
         while dt > 1000000000/fps {
             dt -= 1000000000/fps;
 
-            for player in players.iter_mut() {
-                player.update(&mut input, &mut platforms);
+            entities.0.clear();
+            entities.append(&mut stones);
+            entities.append(&mut players);
+            entities.append(&mut cannons);
+            entities.append(&mut damages);
+
+            for (id, player) in players.iter_mut() {
+                player.update(id.clone(), &mut input, &mut platforms, &mut entities.as_mut(), &mut entities.as_mut());
+            }
+            for (_id, stone) in stones.iter_mut() {
+                stone.update(&mut platforms);
+            }
+            for (_id, cannon) in cannons.iter_mut() {
+                cannon.update(&mut players, &mut damages);
+            }
+            let mut removals = Vec::new();
+            for (id, damage) in damages.iter_mut() {
+                if damage.update() {
+                    removals.push(id.clone());
+                }
+            }
+            for id in removals {
+                damages.remove(&id);
             }
             input.update();
 
@@ -73,17 +120,26 @@ async fn main() {
             ticks += 1;
         }
 
-        if let Some(player) = players.iter().filter(|x| x.id == player_id).next() {
+        if let Some(player) = players.get(&0) {
             player.camera(&target);
         }
 
         clear_background(LIGHTGRAY);
 
-        for player in &mut players {
+        for (_id, player) in &mut players {
             player.render(&assets);
         }
-        for platform in &mut platforms {
+        for (_id, stone) in &mut stones {
+            stone.render(&assets);
+        }
+        for (_id, platform) in &mut platforms {
             platform.render();
+        }
+        for (_id, cannon) in &mut cannons {
+            cannon.render(&assets);
+        }
+        for (_id, damage) in &mut damages {
+            damage.render(&assets);
         }
 
         set_default_camera();
