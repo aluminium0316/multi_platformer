@@ -5,6 +5,7 @@ use crate::{entity::Entity, platform::Platform, projectiles::Projectile, vector:
 use super::obj::Obj;
 use macroquad::prelude::*;
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Stone {
     x: f64,
     y: f64,

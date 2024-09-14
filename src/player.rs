@@ -4,6 +4,7 @@ use macroquad::prelude::*;
 
 use crate::{entity::Entity, hold::obj::Obj, input::Input, key, platform::{LineType, Platform}, projectiles::Projectile, vector::{dist2, proj}, Scene};
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Player {
     x: f64,
     y: f64,
@@ -11,28 +12,34 @@ pub struct Player {
     vy: f64,
     dir: f64,
     ground: i32,
+    linetype: LineType,
     nx: f64,
     ny: f64,
     hold: Option<u64>,
+    cam: f64,
+    pub input: Input,
 }
 
 impl Player {
-    pub fn new() -> Self {
+    pub fn new(x: f64, y: f64) -> Self {
         Self {
-            x: 0.0,
-            y: 0.0,
+            x,
+            y,
             vx: 0.0,
             vy: 0.0,
             dir: 0.0,
             ground: 0,
+            linetype: LineType::Ice,
             nx: 0.0,
             ny: -1.0,
             hold: None,
+            cam: 0.0,
+            input: Input::new()
         }
     }
 
-    pub fn update(&mut self, id: u64, input: &mut Input, platforms: &mut HashMap<u64, Platform>, objs: &mut HashMap<u64, &mut dyn Obj>, projectiles: &mut HashMap<u64, &mut dyn Projectile>, scene: &mut Scene) {
-
+    pub fn update(&mut self, id: u64, platforms: &mut HashMap<u64, Platform>, objs: &mut HashMap<u64, &mut dyn Obj>, projectiles: &mut HashMap<u64, &mut dyn Projectile>, scene: &mut Scene, start: &mut bool) {
+        let input = &mut self.input;
         self.vy += 1.0 / 256.0;
         if self.vy > 8.0 {
             self.vy = 8.0;
@@ -80,7 +87,7 @@ impl Player {
             self.vy += 0.5 * ny;
         }
 
-        if self.ground < 16 {
+        if matches!(self.linetype, LineType::Normal) && self.ground < 16 {
             self.vx = (self.vx + vx * self.ny) * 63.0 / 64.0 - vx * self.ny;
             self.vy = (self.vy - vx * self.nx) * 63.0 / 64.0 + vx * self.nx;
         }
@@ -130,6 +137,7 @@ impl Player {
         self.y += self.vy;
         self.ground += 1;
 
+        self.linetype = LineType::Inv;
         for (_id, platform) in platforms {
             let (x, y, vx, vy, collided, nx, ny, linetypes) = platform.collide(self.x, self.y, 4.0, self.vx, self.vy);
             if collided {
@@ -139,26 +147,45 @@ impl Player {
                 self.vy = vy;
                 self.nx = nx;
                 self.ny = ny;
-                self.ground = 0;
                 for linetype in linetypes {
+                    if let LineType::Inv = linetype { } else {
+                        self.ground = 0;
+                    }
                     if let LineType::End = linetype {
                         *scene = Scene::End {
                             winner: format!("Winner: {}", id)
                         };
                     }
+                    if let LineType::Normal = linetype {
+                        self.linetype = LineType::Normal;
+                    }
                 }
             }
         }
 
+        // if self.ground < 16 {
+        //     self.cam = self.cam * 15.0 / 16.0 + (self.y - 64.0) / 16.0;
+        // }
+        // else if self.vy > -0.5 {
+        //     self.cam = self.cam * 15.0 / 16.0 + (self.y - 32.0) / 16.0;
+        // }
+        // self.cam = self.cam * 15.0 / 16.0  + (self.y + self.vy.abs().sqrt() * 48.0 * self.vy.signum() - 16.0) / 16.0;
+        self.cam = self.cam * 15.0 / 16.0  + (self.y - 32.0) / 16.0 + self.vy;
         if let Some(id_) = &mut self.hold {
             if let Some(hold) = objs.get_mut(id_) {
                 hold.hold_location(self.x, self.y - 4.0);
             }
         }
 
+        if input.down[key!(RightBracket)] == 0 {
+            *start = false;
+        }
+
         for (_id, projectile) in projectiles.iter_mut() {
             projectile.collision(self);
         }
+
+        self.input.update();
     }
 
     pub fn render(&self, assets: &Vec<Texture2D>) {
@@ -173,7 +200,7 @@ impl Player {
 
     pub fn camera(&self, target: &RenderTarget) {
         set_camera(&Camera2D {
-            target: vec2(self.x.clamp(-128.0, 128.0) as f32, self.y as f32),
+            target: vec2(0.0, self.cam as f32),
             render_target: Some(target.clone()),
             zoom: vec2( 1.0 / 128.0 , 1.0 / 96.0),
             ..Default::default()
@@ -201,6 +228,7 @@ impl Player {
 
 impl Obj for Player {
     fn hold_location(&mut self, x: f64, y: f64) {
+        self.hold = None;
         self.x = x;
         self.y = y - 4.0;
         self.vx = 0.0;

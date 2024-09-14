@@ -4,6 +4,7 @@ use macroquad::prelude::*;
 
 use crate::{entity::Entity, new_id, player::Player, projectiles::damage::Damage, vector::dist2};
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Cannon {
     x: f64,
     y: f64,

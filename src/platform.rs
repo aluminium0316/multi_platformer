@@ -3,13 +3,15 @@ use rand::rand;
 
 use crate::{vector::{dist2, dot, proj}, Scene};
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub enum LineType {
     Normal,
     End, 
     Ice,
+    Inv,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct Line {
     x1: f64,
     y1: f64,
@@ -24,6 +26,7 @@ impl Line {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Platform {
     x: f64,
     y: f64,
@@ -32,17 +35,7 @@ pub struct Platform {
 
 impl Platform {
     pub fn new() -> Self {
-        let mut lines = Vec::new();
-
-        for i in 0..16 {
-            lines.push(Line::new(rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, LineType::Normal));
-            if lines[i].x2 < lines[i].x1 {
-                (lines[i].x1, lines[i].x2) = (lines[i].x2, lines[i].x1);
-            }
-        }
-
-        rand();
-        lines.push(Line::new(rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, rand() as f64 / 8388608.0 - 256.0, LineType::End));
+        let lines = Vec::new();
 
         Self {
             x: 0.0,
@@ -56,8 +49,13 @@ impl Platform {
                 LineType::Normal => RED,
                 LineType::End => GREEN,
                 LineType::Ice => SKYBLUE,
+                LineType::Inv => BLANK,
             });
         }
+    }
+
+    pub fn new_ln(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, line: LineType) {
+        self.lines.push(Line::new(x1, y1, x2, y2, line));
     }
 
     pub fn collide(&self, mut x: f64, mut y: f64, r: f64, mut vx: f64, mut vy: f64) -> (f64, f64, f64, f64, bool, f64, f64, Vec<LineType>) {

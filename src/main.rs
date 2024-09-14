@@ -9,10 +9,12 @@ mod spawners;
 mod scene;
 mod levels;
 mod networking;
+mod startarea;
 
 use std::env::args;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Ipv4Addr, TcpListener, TcpStream, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::os::unix::net;
 use std::time::{Instant, SystemTime};
 use std::{io, thread};
 use std::{collections::HashMap, sync::atomic::AtomicU64};
@@ -20,18 +22,20 @@ use std::{collections::HashMap, sync::atomic::AtomicU64};
 use entity::Entities;
 use hold::stone::Stone;
 use input::Input;
-use levels::LevelLoader;
+use levels::{id_1, LevelLoader};
 use macroquad::{prelude::*, window};
 use platform::Platform;
 use player::Player;
+use projectiles::damage::Damage;
 use scene::end::UI;
 use spawners::cannon::Cannon;
+use startarea::Startarea;
 
 fn window_conf() -> Conf {
     Conf {
         window_title: "43".to_owned(),
-        window_width: 768,
-        window_height: 576,
+        window_width: 256 * 2,
+        window_height: 192 * 2,
         ..Default::default()
     }
 }
@@ -56,22 +60,32 @@ pub enum Scene {
 //     });
 // }
 
-enum Client {
-    Listener(TcpListener),
-    Stream(TcpStream)
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub enum NetData {
+    Login { id: SocketAddr },
+    Input { id: SocketAddr, input: Input },
+    World { data: (HashMap<u64, Player>, HashMap<u64, Platform>, HashMap<u64, Stone>, HashMap<u64, Damage>, HashMap<u64, Cannon>, bool, Startarea) },
+    Id { id: u64 },
 }
 
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut client = true;
+    let mut port = 0;
     for arg in args() {
         if arg == "s" {
             client = false;
+        }
+        if let Ok(id) = arg.parse::<u16>()  {
+            port = id;
         }
     }
 
     let mut input = Input::new();
     let mut scene = Scene::Start;
+    let mut start = false;
+    let mut startarea = Startarea::new(0.0, 0.0, 0.0, 0.0);
+    let mut stpos = (0.0, 0.0);
 
     let mut players = HashMap::new();
     let mut platforms = HashMap::new();
@@ -79,8 +93,8 @@ async fn main() {
     let mut damages = HashMap::new();
     let mut cannons = HashMap::new();
     let mut player_id = new_id();
-    players.insert(player_id, Player::new());
-    LevelLoader::load(0, &mut platforms, &mut stones, &mut cannons);
+    players.insert(player_id, Player::new(0.0, 0.0));
+    LevelLoader::load(0, client, None, &mut platforms, &mut stones, &mut cannons);
     
     let mut entities: Entities = Entities(HashMap::new());
 
@@ -104,10 +118,10 @@ async fn main() {
         asset.set_filter(FilterMode::Nearest);
     }
     
-    let mut fullscreen = true;
+    // let mut fullscreen = true;
 
     let socket = if client { 
-        UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+        UdpSocket::bind(format!("127.0.0.1:{}", port))
     } 
     else {
         UdpSocket::bind("127.0.0.1:3400")
@@ -119,84 +133,118 @@ async fn main() {
     loop {
         input.input();
 
-        if input.down[key!(F11)] == 0 {
-            fullscreen ^= true;
-            set_fullscreen(fullscreen);
-        }
+        // if input.down[key!(F11)] == 0 {
+        //     fullscreen ^= true;
+        //     set_fullscreen(fullscreen);
+        // }
 
         let ns = t.elapsed().as_nanos();
         dt += ns - prev_ns;
         prev_ns = ns;
         let mut i = 0;
 
-        if let Scene::Gameplay = scene {
-            while dt > 1000000000/fps {
-                dt -= 1000000000/fps;
-
+        while dt > 1000000000/fps {
+            dt -= 1000000000/fps;
+            
+            if let Scene::Gameplay = scene {
                 entities.0.clear();
                 entities.append(&mut stones);
                 entities.append(&mut players);
                 entities.append(&mut cannons);
                 entities.append(&mut damages);
 
-                update(&mut players, |id, player| {
-                    player.update(id.clone(), &mut input, &mut platforms, &mut entities.as_mut(), &mut entities.as_mut(), &mut scene);
-                    false
-                });
-                update(&mut stones, |_id, stone| {
-                    stone.update(&mut platforms);
-                    false
-                });
-                update(&mut cannons, |_id, cannon| {
-                    cannon.update(&mut players, &mut damages);
-                    false
-                });
-                update(&mut damages, |_id, damage| {
-                    damage.update()
-                });
-                input.update();
-
-                i += 1;
-                if i > 8 {
-                    break;
+                if let Some(player) = players.get_mut(&player_id) {
+                    player.input.set(&input);
                 }
+                update(&mut players, |id, player| {
+                    player.update(id.clone(), &mut platforms, &mut entities.as_mut(), &mut entities.as_mut(), &mut scene, &mut start);
+                    false
+                });
+                startarea.update(&mut start, &mut players);
+                if !start && !client {
+                    update(&mut stones, |_id, stone| {
+                        stone.update(&mut platforms);
+                        false
+                    });
+                    update(&mut cannons, |_id, cannon| {
+                        cannon.update(&mut players, &mut damages);
+                        false
+                    });
+                    update(&mut damages, |_id, damage| {
+                        damage.update()
+                    });
+                }
+            }
 
-                ticks += 1;
-
-                if !client {
-                    let mut buf = [0; 256];
-                    loop {
-                        if let Some((amt, src)) = match socket.recv_from(&mut buf) {
-                            Ok(n) => Some(n),
-                            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                            Err(e) => panic!("encountered IO error: {e}"),
-                        } {
-                            let buf = &mut buf[..amt];
-                            let out = vec![0];
-                            if buf[0] == 0 {
-                                let x = f64::from_be_bytes(buf[2..10].try_into().unwrap());
-                                let y = f64::from_be_bytes(buf[10..18].try_into().unwrap());
-                                // draw_circle(x as f32, y as f32, 4.0, MAGENTA);
-                                if !clients.contains_key(&buf[1]) {
-                                    clients.insert(buf[1], (0.0, 0.0));
+            if !client {
+                let mut buf = [0; 65536];
+                let world = NetData::World { data: (players.clone(), platforms.clone(), stones.clone(), damages.clone(), cannons.clone(), start, startarea.clone()) };
+                loop {
+                    if let Some((amt, src)) = match socket.recv_from(&mut buf) {
+                        Ok(n) => Some(n),
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(e) => panic!("encountered IO error: {e}"),
+                    } {
+                        let buf = &mut buf[..amt];
+                        let netdata: NetData = bincode::deserialize(&buf).unwrap();
+                        match netdata {
+                            NetData::Login { id } => {
+                                if !clients.contains_key(&id.into()) {
+                                    let client_id = new_id();
+                                    players.insert(client_id, Player::new(stpos.0, stpos.1));
+                                    clients.insert(id, client_id);
+                                    socket.send_to(&bincode::serialize(&NetData::Id { id: client_id }).unwrap(), src).unwrap();
                                 }
-                                *clients.get_mut(&buf[1]).unwrap() = (x, y);
+                                // let client_id = clients.get(&client).unwrap();
+                                socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();    
+                            },
+                            NetData::Input { id, input } => {
+                                let client = players.get_mut(clients.get(&id).unwrap()).unwrap();
+                                client.input.set(&input);
+                                socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();
                             }
-                            // socket.send_to(buf, &src).unwrap();
+                            _ => {}
                         }
                     }
                 }
-                else {
-                    let buf1 = players.get(&player_id).unwrap().pos();
-                    let mut buf = vec![0, 1];
-                    buf.extend(buf1.0.to_be_bytes().iter());
-                    buf.extend(buf1.1.to_be_bytes().iter());
-                    socket.send_to(&buf, "127.0.0.1:3400").unwrap();
+            }
+            else {
+                let mut buf = [0; 65536];
+                loop {
+                    if let Some((amt, src)) = match socket.recv_from(&mut buf) {
+                        Ok(n) => Some(n),
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(e) => panic!("encountered IO error: {e}"),
+                    } {
+                        let buf = &mut buf[..amt];
+                        let netdata: NetData = bincode::deserialize(&buf).unwrap();
+                        match netdata {
+                            NetData::World { data } => {
+                                (players, platforms, stones, damages, cannons, start, startarea) = data;
+                            },
+                            NetData::Id { id } => {
+                                player_id = id;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                
+                if let Scene::Gameplay = scene {
+                    let id = NetData::Input { id: socket.local_addr().unwrap(), input: input.clone() };
+                    socket.send_to(&bincode::serialize(&id).unwrap(), "127.0.0.1:3400").unwrap(); 
                 }
             }
-        }
-        else {
-            dt = 0;
+            input.update();
+
+            i += 1;
+            if i > 8 {
+                break;
+            }
+
+            if !start {
+                ticks += 1;
+            }
         }
 
         if let Some(player) = players.get(&player_id) {
@@ -220,10 +268,12 @@ async fn main() {
         for (_id, damage) in &mut damages {
             damage.render(&assets);
         }
+        startarea.render();
 
-        for (_id, client) in &mut clients {
-            draw_circle(client.0 as f32, client.1 as f32, 4.0, MAGENTA);
-        }
+        // for (_id, client) in &mut clients {
+        //     let (x, y) = players.get(&client).unwrap().pos();
+        //     draw_circle(x as f32, y as f32, 4.0, MAGENTA);
+        // }
 
         set_camera(&Camera2D {
             target: vec2(0.0, 0.0),
@@ -232,16 +282,18 @@ async fn main() {
             ..Default::default()
         });
 
-        UI::ui(&mut scene, &mut ticks);
+        startarea.ui(&start);
+        UI::ui(&mut scene, &mut ticks, &client);
         if let Scene::Restart{ level } = scene {
             scene = Scene::Gameplay;
             players.clear();
             player_id = new_id();
-            players.insert(player_id, Player::new());
-            LevelLoader::load(0, &mut platforms, &mut stones, &mut cannons);
-            // if !client {
-                LevelLoader::load(level, &mut platforms, &mut stones, &mut cannons);
-            // }
+            LevelLoader::load(0, client, Some(&socket), &mut platforms, &mut stones, &mut cannons);
+            let (x, y) = LevelLoader::load(level, client, Some(&socket), &mut platforms, &mut stones, &mut cannons);
+            stpos = (x, y);
+            players.insert(player_id, Player::new(x, y));
+            start = true;
+            startarea = Startarea::new(x - 32.0, y - 12.0, 64.0, 24.0);
         }
 
         set_default_camera();

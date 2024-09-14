@@ -1,8 +1,13 @@
 use macroquad::prelude::*;
+use serde_big_array::BigArray;
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Input {
+    #[serde(with = "BigArray")]
     pub down: [i64; 512],
+    #[serde(with = "BigArray")]
     pub up: [i64; 512],
+    #[serde(with = "BigArray")]
     pub key: [bool; 512],
     // pub x: f32,
     // pub y: f32,
@@ -60,37 +65,16 @@ impl Input {
         }
     }
 
-    pub fn as_bytes(&self) -> Vec<u8> {
-        let mut v = vec![];
-        v.extend(self.down.iter().flat_map(|x| x.to_be_bytes()));
-        v.extend(self.up.iter().flat_map(|x| x.to_be_bytes()));
-        v.extend(self.key.iter().flat_map(|x| [*x as u8]));
-        v
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        let mut s = Self::new();
-        let mut i = 0;
-        for byte8 in bytes.chunks_exact(8) {
-            if i < 512 {
-                s.down[i] = i64::from_be_bytes(byte8.try_into().unwrap());
+    pub fn set(&mut self, other: &Input) {
+        for i in 0..512 {
+            if other.down[i] == 0 {
+                self.down[i] = 0;
             }
-            else if i < 1024 {
-                s.up[i - 512] = i64::from_be_bytes(byte8.try_into().unwrap());
+            if other.up[i] == 0 {
+                self.up[i] = 0;
             }
-            else {
-                s.key[(i - 1024) * 8 + 0] = byte8[0] != 0;
-                s.key[(i - 1024) * 8 + 1] = byte8[1] != 0;
-                s.key[(i - 1024) * 8 + 2] = byte8[2] != 0;
-                s.key[(i - 1024) * 8 + 3] = byte8[3] != 0;
-                s.key[(i - 1024) * 8 + 4] = byte8[4] != 0;
-                s.key[(i - 1024) * 8 + 5] = byte8[5] != 0;
-                s.key[(i - 1024) * 8 + 6] = byte8[6] != 0;
-                s.key[(i - 1024) * 8 + 7] = byte8[7] != 0;
-            }
-            i += 1;
+            self.key[i] = other.key[i];
         }
-        s
     }
 }
 

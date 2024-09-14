@@ -4,6 +4,7 @@ use crate::{entity::Entity, vector::dist2};
 
 use super::Projectile;
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Damage {
     x: f64,
     y: f64,
