@@ -10,12 +10,13 @@ pub struct Damage {
     y: f64,
     vx: f64,
     vy: f64,
+    force: f64,
     t: i32,
 }
 
 impl Damage {
-    pub fn new(x: f64, y: f64, vx: f64, vy: f64) -> Self {
-        Self { x, y, vx, vy, t: 4096 }
+    pub fn new(x: f64, y: f64, vx: f64, vy: f64, force: f64) -> Self {
+        Self { x, y, vx, vy, force, t: 4096 }
     }
 
     pub fn update(&mut self) -> bool {
@@ -49,7 +50,7 @@ impl Projectile for Damage {
         let (x, y) = player.pos();
         let d = dist2(x, y, self.x, self.y);
         if d < 16.0 {
-            player.throw(self.vx * 2.0, self.vy * 2.0);
+            player.throw(self.vx * self.force, self.vy * self.force / 2.0);
             self.t = 0;
         }
     }

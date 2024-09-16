@@ -9,6 +9,7 @@ pub struct UI;
 impl UI {
     pub fn ui(scene: &mut Scene, t: &mut i32, client: &bool) {
         draw_text(&format!("Time: {:.2}", t.clone() as f64 / 240.0), -120.0, -80.0, 16.0, BLACK);
+        draw_text(if *client { "s=0" } else { "s=1" }, 100.0, -80.0, 16.0, BLACK);
         let mut newscene = scene.clone();
         match scene {
             Scene::End{ winner } => {

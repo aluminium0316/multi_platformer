@@ -57,6 +57,16 @@ impl Platform {
     pub fn new_ln(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, line: LineType) {
         self.lines.push(Line::new(x1, y1, x2, y2, line));
     }
+    pub fn new_poly(&mut self, mut lines: Vec<(f64, f64)>, linetype: LineType) {
+        lines.push(lines[0]);
+        let mut prev: Option<(f64, f64)> = None;
+        for line in lines.iter() {
+            if let Some(pline) = prev {
+                self.lines.push(Line::new(pline.0, pline.1, line.0, line.1, linetype.clone()));
+            }
+            prev = Some(line.clone())
+        }
+    }
 
     pub fn collide(&self, mut x: f64, mut y: f64, r: f64, mut vx: f64, mut vy: f64) -> (f64, f64, f64, f64, bool, f64, f64, Vec<LineType>) {
         let mut collision = false;

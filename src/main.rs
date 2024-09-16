@@ -24,9 +24,11 @@ use hold::stone::Stone;
 use input::Input;
 use levels::{id_1, LevelLoader};
 use macroquad::{prelude::*, window};
+use miniquad::window::set_window_position;
 use platform::Platform;
 use player::Player;
 use projectiles::damage::Damage;
+use projectiles::path::{self, Path};
 use scene::end::UI;
 use spawners::cannon::Cannon;
 use startarea::Startarea;
@@ -62,22 +64,28 @@ pub enum Scene {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum NetData {
-    Login { id: SocketAddr },
-    Input { id: SocketAddr, input: Input },
-    World { data: (HashMap<u64, Player>, HashMap<u64, Platform>, HashMap<u64, Stone>, HashMap<u64, Damage>, HashMap<u64, Cannon>, bool, Startarea) },
+    Login { id: String },
+    Input { id: String, input: Input },
+    World { data: (HashMap<u64, Player>, HashMap<u64, Platform>, HashMap<u64, Stone>, HashMap<u64, Damage>, HashMap<u64, Cannon>, HashMap<u64, Path>, bool, Startarea) },
     Id { id: u64 },
+    Denial,
 }
 
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut client = true;
     let mut port = 0;
+    let mut username = String::new();
     for arg in args() {
         if arg == "s" {
             client = false;
         }
         if let Ok(id) = arg.parse::<u16>()  {
             port = id;
+        }
+        if arg.chars().nth(0) == Some('u') {
+            let (_, uname) = arg.split_at(1);
+            username = uname.to_owned();
         }
     }
 
@@ -92,9 +100,10 @@ async fn main() {
     let mut stones = HashMap::new();
     let mut damages = HashMap::new();
     let mut cannons = HashMap::new();
+    let mut paths = HashMap::new();
     let mut player_id = new_id();
-    players.insert(player_id, Player::new(0.0, 0.0));
-    LevelLoader::load(0, client, None, &mut platforms, &mut stones, &mut cannons);
+    players.insert(player_id, Player::new(username.clone(), 0.0, 0.0));
+    LevelLoader::load(0, client, username.clone(), None, &mut platforms, &mut stones, &mut cannons, &mut damages, &mut paths);
     
     let mut entities: Entities = Entities(HashMap::new());
 
@@ -157,11 +166,11 @@ async fn main() {
                     player.input.set(&input);
                 }
                 update(&mut players, |id, player| {
-                    player.update(id.clone(), &mut platforms, &mut entities.as_mut(), &mut entities.as_mut(), &mut scene, &mut start);
+                    player.update(id.clone(), &mut platforms, &mut players, &mut entities.as_mut(), &mut entities.as_mut(), &mut scene, &mut start);
                     false
                 });
                 startarea.update(&mut start, &mut players);
-                if !start && !client {
+                if !start {
                     update(&mut stones, |_id, stone| {
                         stone.update(&mut platforms);
                         false
@@ -173,12 +182,20 @@ async fn main() {
                     update(&mut damages, |_id, damage| {
                         damage.update()
                     });
+                    update(&mut paths, |_id, path| {
+                        path.update(&mut entities.as_mut());
+                        false
+                    });
                 }
+            }
+
+            if let Scene::End { .. } = scene {
+                clients.clear();
             }
 
             if !client {
                 let mut buf = [0; 65536];
-                let world = NetData::World { data: (players.clone(), platforms.clone(), stones.clone(), damages.clone(), cannons.clone(), start, startarea.clone()) };
+                let world = NetData::World { data: (players.clone(), platforms.clone(), stones.clone(), damages.clone(), cannons.clone(), paths.clone(), start, startarea.clone()) };
                 loop {
                     if let Some((amt, src)) = match socket.recv_from(&mut buf) {
                         Ok(n) => Some(n),
@@ -189,19 +206,26 @@ async fn main() {
                         let netdata: NetData = bincode::deserialize(&buf).unwrap();
                         match netdata {
                             NetData::Login { id } => {
-                                if !clients.contains_key(&id.into()) {
-                                    let client_id = new_id();
-                                    players.insert(client_id, Player::new(stpos.0, stpos.1));
-                                    clients.insert(id, client_id);
-                                    socket.send_to(&bincode::serialize(&NetData::Id { id: client_id }).unwrap(), src).unwrap();
+                                if start {
+                                    if !clients.contains_key(&id) {
+                                        let client_id = new_id();
+                                        players.insert(client_id, Player::new(id.clone(), stpos.0, stpos.1));
+                                        clients.insert(id.clone(), client_id);
+                                        socket.send_to(&bincode::serialize(&NetData::Id { id: client_id }).unwrap(), src).unwrap();
+                                    }
+                                    // let client_id = clients.get(&client).unwrap();
+                                    socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();
                                 }
-                                // let client_id = clients.get(&client).unwrap();
-                                socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();    
+                                else {
+                                    socket.send_to(&bincode::serialize(&NetData::Denial).unwrap(), src).unwrap();
+                                }
                             },
                             NetData::Input { id, input } => {
-                                let client = players.get_mut(clients.get(&id).unwrap()).unwrap();
-                                client.input.set(&input);
-                                socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();
+                                if let Some(client_id) = clients.get(&id) {
+                                    let client = players.get_mut(client_id).unwrap();
+                                    client.input.set(&input);
+                                    socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();
+                                }
                             }
                             _ => {}
                         }
@@ -220,18 +244,21 @@ async fn main() {
                         let netdata: NetData = bincode::deserialize(&buf).unwrap();
                         match netdata {
                             NetData::World { data } => {
-                                (players, platforms, stones, damages, cannons, start, startarea) = data;
+                                (players, platforms, stones, damages, cannons, paths, start, startarea) = data;
                             },
                             NetData::Id { id } => {
                                 player_id = id;
-                            }
+                            },
+                            NetData::Denial => {
+                                scene = Scene::Start;
+                            },
                             _ => {}
                         }
                     }
                 }
                 
                 if let Scene::Gameplay = scene {
-                    let id = NetData::Input { id: socket.local_addr().unwrap(), input: input.clone() };
+                    let id = NetData::Input { id: username.clone(), input: input.clone() };
                     socket.send_to(&bincode::serialize(&id).unwrap(), "127.0.0.1:3400").unwrap(); 
                 }
             }
@@ -242,8 +269,10 @@ async fn main() {
                 break;
             }
 
-            if !start {
-                ticks += 1;
+            if let Scene::End { .. } = scene { } else {
+                if !start {
+                    ticks += 1;
+                }
             }
         }
 
@@ -268,6 +297,9 @@ async fn main() {
         for (_id, damage) in &mut damages {
             damage.render(&assets);
         }
+        for (_id, path) in &mut paths {
+            path.render();
+        }
         startarea.render();
 
         // for (_id, client) in &mut clients {
@@ -282,16 +314,18 @@ async fn main() {
             ..Default::default()
         });
 
-        startarea.ui(&start);
+        if let Scene::Start = scene { } else {
+            startarea.ui(&start);
+        }
         UI::ui(&mut scene, &mut ticks, &client);
         if let Scene::Restart{ level } = scene {
             scene = Scene::Gameplay;
             players.clear();
             player_id = new_id();
-            LevelLoader::load(0, client, Some(&socket), &mut platforms, &mut stones, &mut cannons);
-            let (x, y) = LevelLoader::load(level, client, Some(&socket), &mut platforms, &mut stones, &mut cannons);
+            LevelLoader::load(0, client, username.clone(), Some(&socket), &mut platforms, &mut stones, &mut cannons, &mut damages, &mut paths);
+            let (x, y) = LevelLoader::load(level, client, username.clone(), Some(&socket), &mut platforms, &mut stones, &mut cannons, &mut damages, &mut paths);
             stpos = (x, y);
-            players.insert(player_id, Player::new(x, y));
+            players.insert(player_id, Player::new(username.clone(), x, y));
             start = true;
             startarea = Startarea::new(x - 32.0, y - 12.0, 64.0, 24.0);
         }
@@ -308,15 +342,17 @@ async fn main() {
     }
 }
 
-fn update<T>(vec: &mut HashMap<u64, T>, mut f: impl FnMut(&u64, &mut T) -> bool) {
-    let mut removals = Vec::new();
-    for (id, t) in vec.iter_mut() {
-        if f(id, t) {
-            removals.push(id.clone());
+fn update<T>(vec: *mut HashMap<u64, T>, mut f: impl FnMut(&u64, &mut T) -> bool) {
+    unsafe {
+        let mut removals = Vec::new();
+        for (id, t) in vec.as_mut().unwrap().iter_mut() {
+            if f(id, t) {
+                removals.push(id.clone());
+            }
         }
-    }
-    for id in removals {
-        vec.remove(&id);
+        for id in removals {
+            vec.as_mut().unwrap().remove(&id);
+        }
     }
 }
 

@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use macroquad::prelude::*;
 
-use crate::{entity::Entity, hold::obj::Obj, input::Input, key, platform::{LineType, Platform}, projectiles::Projectile, vector::{dist2, proj}, Scene};
+use crate::{entity::Entity, hold::obj::Obj, input::Input, key, platform::{LineType, Platform}, projectiles::Projectile, vector::{dist2, norm, proj}, Scene};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Player {
+    username: String,
     x: f64,
     y: f64,
     vx: f64,
@@ -17,12 +18,14 @@ pub struct Player {
     ny: f64,
     hold: Option<u64>,
     cam: f64,
+    escape: i32,
     pub input: Input,
 }
 
 impl Player {
-    pub fn new(x: f64, y: f64) -> Self {
+    pub fn new(username: String, x: f64, y: f64) -> Self {
         Self {
+            username,
             x,
             y,
             vx: 0.0,
@@ -34,11 +37,12 @@ impl Player {
             ny: -1.0,
             hold: None,
             cam: 0.0,
+            escape: 0,
             input: Input::new()
         }
     }
 
-    pub fn update(&mut self, id: u64, platforms: &mut HashMap<u64, Platform>, objs: &mut HashMap<u64, &mut dyn Obj>, projectiles: &mut HashMap<u64, &mut dyn Projectile>, scene: &mut Scene, start: &mut bool) {
+    pub fn update(&mut self, id: u64, platforms: &mut HashMap<u64, Platform>, players: &mut HashMap<u64, Player>, objs: &mut HashMap<u64, &mut dyn Obj>, projectiles: &mut HashMap<u64, &mut dyn Projectile>, scene: &mut Scene, start: &mut bool) {
         let input = &mut self.input;
         self.vy += 1.0 / 256.0;
         if self.vy > 8.0 {
@@ -56,8 +60,10 @@ impl Player {
             self.dir = vx;
         }
 
+        self.escape -= 1;
         if input.down[key!(K)] < 16 && self.ground < 16 {
             input.down[key!(K)] = 16;
+            self.escape = 16;
             self.ground = 16;
             let mut nx = self.nx;
             let mut ny = self.ny;
@@ -92,13 +98,18 @@ impl Player {
             self.vy = (self.vy - vx * self.nx) * 63.0 / 64.0 + vx * self.nx;
         }
         else {
-            self.vx = (self.vx - vx) * 63.0 / 64.0 + vx;
+            if matches!(self.linetype, LineType::Ice) {
+                self.vx = (self.vx - vx) * 511.0 / 512.0 + vx;
+            }
+            else {
+                self.vx = (self.vx - vx) * 63.0 / 64.0 + vx;
+            }
         }
 
-        if input.down[key!(J)] < 16 && self.hold.is_some() {
-            input.down[key!(J)] = 16;
-            if let Some(id_) = &mut self.hold {
-                if let Some(hold) = objs.get_mut(id_) {
+        if self.hold.is_some() {
+            if let Some(hold) = objs.get_mut(&self.hold.unwrap()) {
+                if input.down[key!(J)] < 16 || hold.escape() {
+                    input.down[key!(J)] = 16;
                     if input.key[key!(S)] {
                         hold.throw(self.vx / 2.0, self.vy / 2.0 + 0.5);
                         self.vx /= 2.0;
@@ -117,12 +128,45 @@ impl Player {
                         self.vy /= 2.0;
                         self.vx -= self.dir;
                     }
+                    self.hold = None;
                 }
             }
-            self.hold = None;
         }
         if input.down[key!(J)] < 16 {
-            let nearest = <dyn Obj>::nearest(objs, self.x, self.y, 256.0, id);
+            let mut id1s = None;
+            let mut id2s = None;
+            let mut id3s = None;
+            for (id1, player) in players.iter() {
+                if player.hold == Some(id) {
+                    id1s = Some(id1);
+                }
+            }
+            for (id2, player) in players.iter() {
+                if player.hold == id1s.copied() && player.hold.is_some() {
+                    id2s = Some(id2);
+                }
+            }
+            for (id3, player) in players.iter() {
+                if player.hold == id2s.copied() && player.hold.is_some() {
+                    id3s = Some(id3);
+                }
+            }
+            let mut ids = vec![id];
+            if let Some(id1) = id1s {
+                ids.push(id1.clone());
+            }
+            if let Some(id1) = id2s {
+                ids.push(id1.clone());
+            }
+            if let Some(id1) = id3s {
+                ids.push(id1.clone());
+            }
+            for (_id, player) in players.iter() {
+                if let Some(id0) = player.hold {
+                    ids.push(id0)
+                }
+            }
+            let nearest = <dyn Obj>::nearest(objs, self.x, self.y, 256.0, &ids);
             self.hold = nearest;
             if let Some(id) = nearest {
                 input.down[key!(J)] = 16;
@@ -153,11 +197,14 @@ impl Player {
                     }
                     if let LineType::End = linetype {
                         *scene = Scene::End {
-                            winner: format!("Winner: {}", id)
+                            winner: format!("Winner: {}", self.username.clone()),
                         };
                     }
                     if let LineType::Normal = linetype {
                         self.linetype = LineType::Normal;
+                    }
+                    if let LineType::Ice = linetype {
+                        self.linetype = LineType::Ice;
                     }
                 }
             }
@@ -190,6 +237,7 @@ impl Player {
 
     pub fn render(&self, assets: &Vec<Texture2D>) {
         // draw_rectangle(self.x as f32 - 8.0, self.y as f32 - 8.0, 16.0, 16.0, BLUE)
+        draw_text(&self.username, self.x as f32 - 4.0, self.y as f32 - 5.0, 8.0, BLUE);
         draw_texture_ex(&assets[0], self.x as f32 - 4.0, self.y as f32 - 4.0, WHITE, DrawTextureParams {
             source: Some(Rect { x: 0.0, y: 0.0, w: 8.0, h: 8.0 }),
             dest_size: Some(vec2(8.0, 8.0)),
@@ -228,11 +276,11 @@ impl Player {
 
 impl Obj for Player {
     fn hold_location(&mut self, x: f64, y: f64) {
-        self.hold = None;
         self.x = x;
         self.y = y - 4.0;
         self.vx = 0.0;
         self.vy = 0.0;
+        self.ground = 0;
     }
     fn throw(&mut self, vx: f64, vy: f64) {
         self.vx = vx;
@@ -244,10 +292,33 @@ impl Obj for Player {
     fn hold(&mut self) -> (f64, f64) {
         (self.vx, self.vy)
     }
+    fn escape(&mut self) -> bool {
+        self.escape > 0
+    }
+}
+
+impl Projectile for Player {
+    fn collision(&mut self, player: &mut crate::player::Player) {
+        if std::ptr::eq(player.as_proj().unwrap(), self) {
+            return;
+        }
+        let (x, y) = player.pos();
+        let d = dist2(x, y, self.x, self.y);
+        let (vx, vy) = norm(x - self.x, y - self.y, 0.25);
+        if d < 16.0 {
+            // player.throw(vx, vy);
+            player.collide(vx, vy);
+            // self.vx -= vx;
+            // self.vy -= vy;
+        }
+    }
 }
 
 impl Entity<'_> for Player {
     fn as_obj(&mut self) -> Option<&mut dyn Obj> {
+        Some(self)
+    }
+    fn as_proj(&mut self) -> Option<&mut dyn Projectile> {
         Some(self)
     }
 }
