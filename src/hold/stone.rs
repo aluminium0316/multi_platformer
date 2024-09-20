@@ -37,10 +37,10 @@ impl Stone {
         self.ground += 1;
 
         for (_id, platform) in platforms {
-            let (x, y, vx, vy, collided, _nx, _ny, _) = platform.collide(self.x, self.y, 4.0, self.vx, self.vy);
+            let (x, y, vx, vy, collided, _nx, _ny, dx, dy, _) = platform.collide(self.x, self.y, 4.0, self.vx, self.vy, self.x - self.vx, self.y - self.vy);
             if collided {
-                self.x = x;
-                self.y = y;
+                self.x = x + dx;
+                self.y = y + dy;
                 self.vx = vx * 1.5 - self.vx * 0.5;
                 self.vy = vy * 1.5 - self.vy * 0.5;
                 self.ground = 0;

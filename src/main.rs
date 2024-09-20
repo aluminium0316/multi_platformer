@@ -22,9 +22,9 @@ use std::{collections::HashMap, sync::atomic::AtomicU64};
 use entity::Entities;
 use hold::stone::Stone;
 use input::Input;
-use levels::{id_1, LevelLoader};
+use levels::LevelLoader;
+use macroquad::prelude::scene::camera_pos;
 use macroquad::{prelude::*, window};
-use miniquad::window::set_window_position;
 use platform::Platform;
 use player::Player;
 use projectiles::damage::Damage;
@@ -65,7 +65,7 @@ pub enum Scene {
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum NetData {
     Login { id: String },
-    Input { id: String, input: Input },
+    Input { id: String, down: Vec<usize>, up: Vec<usize> },
     World { data: (HashMap<u64, Player>, HashMap<u64, Platform>, HashMap<u64, Stone>, HashMap<u64, Damage>, HashMap<u64, Cannon>, HashMap<u64, Path>, bool, Startarea) },
     Id { id: u64 },
     Denial,
@@ -90,6 +90,8 @@ async fn main() {
     }
 
     let mut input = Input::new();
+    let mut client_down = vec![];
+    let mut client_up = vec![];
     let mut scene = Scene::Start;
     let mut start = false;
     let mut startarea = Startarea::new(0.0, 0.0, 0.0, 0.0);
@@ -121,6 +123,8 @@ async fn main() {
         load_texture("assets/stone.png").await.unwrap(),
         load_texture("assets/cannon.png").await.unwrap(),
         load_texture("assets/orb.png").await.unwrap(),
+        load_texture("assets/levels/level1/level1.png").await.unwrap(),
+        load_texture("assets/levels/level1/background.png").await.unwrap(),
     ];
 
     for asset in &assets {
@@ -140,7 +144,13 @@ async fn main() {
     let mut clients = HashMap::new();
 
     loop {
-        input.input();
+        // input.input();
+        for i in get_keys_pressed() {
+            client_down.push(i as usize & 0x1ff);
+        }
+        for i in get_keys_released() {
+            client_up.push(i as usize & 0x1ff);
+        }
 
         // if input.down[key!(F11)] == 0 {
         //     fullscreen ^= true;
@@ -161,9 +171,10 @@ async fn main() {
                 entities.append(&mut players);
                 entities.append(&mut cannons);
                 entities.append(&mut damages);
+                entities.append(&mut platforms);
 
                 if let Some(player) = players.get_mut(&player_id) {
-                    player.input.set(&input);
+                    player.input.set(&client_down, &client_up);
                 }
                 update(&mut players, |id, player| {
                     player.update(id.clone(), &mut platforms, &mut players, &mut entities.as_mut(), &mut entities.as_mut(), &mut scene, &mut start);
@@ -181,6 +192,10 @@ async fn main() {
                     });
                     update(&mut damages, |_id, damage| {
                         damage.update()
+                    });
+                    update(&mut platforms, |_id, platform| {
+                        platform.update();
+                        false
                     });
                     update(&mut paths, |_id, path| {
                         path.update(&mut entities.as_mut());
@@ -220,10 +235,10 @@ async fn main() {
                                     socket.send_to(&bincode::serialize(&NetData::Denial).unwrap(), src).unwrap();
                                 }
                             },
-                            NetData::Input { id, input } => {
+                            NetData::Input { id, down, up } => {
                                 if let Some(client_id) = clients.get(&id) {
                                     let client = players.get_mut(client_id).unwrap();
-                                    client.input.set(&input);
+                                    client.input.set(&down, &up);
                                     socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();
                                 }
                             }
@@ -258,10 +273,12 @@ async fn main() {
                 }
                 
                 if let Scene::Gameplay = scene {
-                    let id = NetData::Input { id: username.clone(), input: input.clone() };
+                    let id = NetData::Input { id: username.clone(), down: client_down.clone(), up: client_up.clone() };
                     socket.send_to(&bincode::serialize(&id).unwrap(), "127.0.0.1:3400").unwrap(); 
                 }
             }
+            client_down.clear();
+            client_up.clear();
             input.update();
 
             i += 1;
@@ -276,23 +293,26 @@ async fn main() {
             }
         }
 
+        
         if let Some(player) = players.get(&player_id) {
             player.camera(&target);
+            clear_background(LIGHTGRAY);
+            draw_texture(&assets[5], -128.0, (player.cam as f32 - 256.0 + 32.0) * 4.0 / 5.0, WHITE);
         }
 
-        clear_background(LIGHTGRAY);
-
-        for (_id, player) in &mut players {
-            player.render(&assets);
+        let mut iter = platforms.iter_mut().collect::<Vec<_>>();
+        iter.sort_by(|a, b| a.0.partial_cmp(b.0).unwrap());
+        for (_id, platform) in iter {
+            platform.render(&assets);
         }
         for (_id, stone) in &mut stones {
             stone.render(&assets);
         }
-        for (_id, platform) in &mut platforms {
-            platform.render();
-        }
         for (_id, cannon) in &mut cannons {
             cannon.render(&assets);
+        }
+        for (_id, player) in &mut players {
+            player.render(&assets);
         }
         for (_id, damage) in &mut damages {
             damage.render(&assets);

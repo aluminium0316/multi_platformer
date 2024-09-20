@@ -11,13 +11,15 @@ pub struct Player {
     y: f64,
     vx: f64,
     vy: f64,
+    dx: f64,
+    dy: f64,
     dir: f64,
     ground: i32,
     linetype: LineType,
     nx: f64,
     ny: f64,
     hold: Option<u64>,
-    cam: f64,
+    pub cam: f64,
     escape: i32,
     pub input: Input,
 }
@@ -30,6 +32,8 @@ impl Player {
             y,
             vx: 0.0,
             vy: 0.0,
+            dx: 0.0,
+            dy: 0.0,
             dir: 0.0,
             ground: 0,
             linetype: LineType::Ice,
@@ -44,6 +48,10 @@ impl Player {
 
     pub fn update(&mut self, id: u64, platforms: &mut HashMap<u64, Platform>, players: &mut HashMap<u64, Player>, objs: &mut HashMap<u64, &mut dyn Obj>, projectiles: &mut HashMap<u64, &mut dyn Projectile>, scene: &mut Scene, start: &mut bool) {
         let input = &mut self.input;
+
+        let px = self.x;
+        let py = self.y;
+
         self.vy += 1.0 / 256.0;
         if self.vy > 8.0 {
             self.vy = 8.0;
@@ -61,6 +69,7 @@ impl Player {
         }
 
         self.escape -= 1;
+        // input.down[key!(K)] = 0;
         if input.down[key!(K)] < 16 && self.ground < 16 {
             input.down[key!(K)] = 16;
             self.escape = 16;
@@ -93,12 +102,14 @@ impl Player {
             self.vy += 0.5 * ny;
         }
 
+        // vx /= 2.0;
         if matches!(self.linetype, LineType::Normal) && self.ground < 16 {
             self.vx = (self.vx + vx * self.ny) * 63.0 / 64.0 - vx * self.ny;
             self.vy = (self.vy - vx * self.nx) * 63.0 / 64.0 + vx * self.nx;
         }
         else {
             if matches!(self.linetype, LineType::Ice) {
+                vx *= 2.0;
                 self.vx = (self.vx - vx) * 511.0 / 512.0 + vx;
             }
             else {
@@ -181,16 +192,32 @@ impl Player {
         self.y += self.vy;
         self.ground += 1;
 
+        if self.ground > 16 {
+            self.vx += self.dx;
+            self.vy += self.dy;
+            self.dx = 0.0;
+            self.dy = 0.0;
+            self.nx = self.nx * 15.0 / 16.0;
+            self.ny = -1.0 / 16.0 + self.ny * 15.0 / 16.0;
+        }
+
+        self.x += self.dx;
+        self.y += self.dy;
+
         self.linetype = LineType::Inv;
         for (_id, platform) in platforms {
-            let (x, y, vx, vy, collided, nx, ny, linetypes) = platform.collide(self.x, self.y, 4.0, self.vx, self.vy);
+            let (x, y, vx, vy, collided, nx, ny, dx, dy, linetypes) = platform.collide(self.x, self.y, 4.0, self.vx, self.vy, px, py);
             if collided {
                 self.x = x;
                 self.y = y;
-                self.vx = vx;
-                self.vy = vy;
-                self.nx = nx;
-                self.ny = ny;
+                self.vx = vx + self.dx - dx;
+                self.vy = vy + self.dy - dy;
+                // self.nx = nx;
+                // self.ny = ny;
+                self.nx = nx / 16.0 + self.nx * 15.0 / 16.0;
+                self.ny = ny / 16.0 + self.ny * 15.0 / 16.0;
+                self.dx = dx;
+                self.dy = dy;
                 for linetype in linetypes {
                     if let LineType::Inv = linetype { } else {
                         self.ground = 0;
@@ -210,6 +237,12 @@ impl Player {
             }
         }
 
+        let r = self.nx * self.nx + self.ny * self.ny;
+        self.nx /= r;
+        self.ny /= r;
+
+        // self.rn = (self.nx / 16.0 + self.rn.0 * 15.0 / 16.0, self.ny / 16.0 + self.rn.1 * 15.0 / 16.0);
+
         // if self.ground < 16 {
         //     self.cam = self.cam * 15.0 / 16.0 + (self.y - 64.0) / 16.0;
         // }
@@ -217,7 +250,9 @@ impl Player {
         //     self.cam = self.cam * 15.0 / 16.0 + (self.y - 32.0) / 16.0;
         // }
         // self.cam = self.cam * 15.0 / 16.0  + (self.y + self.vy.abs().sqrt() * 48.0 * self.vy.signum() - 16.0) / 16.0;
-        self.cam = self.cam * 15.0 / 16.0  + (self.y - 32.0) / 16.0 + self.vy;
+        self.cam = (
+            self.cam * 15.0 / 16.0  + (self.y - 32.0) / 16.0 + self.vy
+        ).clamp(-416.0, -96.0);
         if let Some(id_) = &mut self.hold {
             if let Some(hold) = objs.get_mut(id_) {
                 hold.hold_location(self.x, self.y - 4.0);
@@ -237,11 +272,22 @@ impl Player {
 
     pub fn render(&self, assets: &Vec<Texture2D>) {
         // draw_rectangle(self.x as f32 - 8.0, self.y as f32 - 8.0, 16.0, 16.0, BLUE)
-        draw_text(&self.username, self.x as f32 - 4.0, self.y as f32 - 5.0, 8.0, BLUE);
-        draw_texture_ex(&assets[0], self.x as f32 - 4.0, self.y as f32 - 4.0, WHITE, DrawTextureParams {
-            source: Some(Rect { x: 0.0, y: 0.0, w: 8.0, h: 8.0 }),
-            dest_size: Some(vec2(8.0, 8.0)),
-            // rotation: self.ny.atan2(self.nx) as f32,
+        draw_text(&self.username, self.x as f32 - 4.0, self.y as f32 - 12.0, 8.0, BLUE);
+        if self.hold.is_some() {
+            draw_texture_ex(&assets[0], self.x as f32 - 8.0, self.y as f32 - 8.0, WHITE, DrawTextureParams {
+                source: Some(Rect { x: 0.0, y: 0.0, w: 16.0, h: 16.0 }),
+                ..Default::default()
+            });
+        }
+        else {
+            draw_texture_ex(&assets[0], self.x as f32 - 8.0, self.y as f32 - 8.0, WHITE, DrawTextureParams {
+                source: Some(Rect { x: 0.0, y: 16.0, w: 16.0, h: 16.0 }),
+                ..Default::default()
+            });
+        }
+        draw_texture_ex(&assets[0], self.x as f32 - 8.0, self.y as f32 - 8.0, WHITE, DrawTextureParams {
+            source: Some(Rect { x: 16.0, y: 0.0, w: 16.0, h: 16.0 }),
+            rotation: self.ny.atan2(self.nx) as f32,
             ..Default::default()
         });
     }

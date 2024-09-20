@@ -65,15 +65,14 @@ impl Input {
         }
     }
 
-    pub fn set(&mut self, other: &Input) {
-        for i in 0..512 {
-            if other.down[i] == 0 {
-                self.down[i] = 0;
-            }
-            if other.up[i] == 0 {
-                self.up[i] = 0;
-            }
-            self.key[i] = other.key[i];
+    pub fn set(&mut self, down: &Vec<usize>, up: &Vec<usize>) {
+        for i in down.iter() {
+            self.down[*i] = 0;
+            self.key[*i] = true;
+        }
+        for i in up.iter() {
+            self.up[*i] = 0;
+            self.key[*i] = false;
         }
     }
 }

@@ -107,6 +107,8 @@ impl Spline {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Path {
+    x: f64,
+    y: f64,
     spline: Spline,
     id: u64,
     t: f64,
@@ -115,6 +117,8 @@ pub struct Path {
 impl Path {
     pub fn new(spline: Spline, id: u64) -> Self {
         Self {
+            x: 0.0,
+            y: 0.0,
             spline,
             id,
             t: 0.0,
@@ -123,7 +127,7 @@ impl Path {
     pub fn update(&mut self, objs: &mut HashMap<u64, &mut dyn Obj>) {
         if let Some(obj) = objs.get_mut(&self.id) {
             let (x, y) = self.spline.b(self.t);
-            obj.hold_location(x, y);
+            obj.hold_location(x + self.x, y + self.y);
         }
         self.t += 1.0;
         let last = self.spline.pos.last().unwrap().clone();
