@@ -101,7 +101,11 @@ impl Platform {
 
             let (x1, y1) = proj(x - line.x1, y - line.y1, line.x2 - line.x1, line.y2 - line.y1);
 
+            nx /= 2.0;
+            ny /= 2.0;
             if ny < x1 && x1 < line.x2 - line.x1 - ny || line.x2 - line.x1 - ny < x1 && x1 < ny || -nx < y1 && y1 < line.y2 - line.y1 + nx || line.y2 - line.y1 + nx < y1 && y1 < -nx {
+                nx *= 2.0;
+                ny *= 2.0;    
                 let d = dist2(x1, y1, x - line.x1, y - line.y1);
                 if d < r*r && dot(x - px + self.px, y - py + self.py, nx, ny) <= 0.0 {
                     x = x1 + line.x1 + nx;

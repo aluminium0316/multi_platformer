@@ -70,10 +70,10 @@ impl Player {
 
         self.escape -= 1;
         // input.down[key!(K)] = 0;
-        if input.down[key!(K)] < 16 && self.ground < 16 {
+        if input.down[key!(K)] < 16 && self.ground < 32 {
             input.down[key!(K)] = 16;
             self.escape = 16;
-            self.ground = 16;
+            self.ground = 32;
             let mut nx = self.nx;
             let mut ny = self.ny;
 
@@ -92,7 +92,7 @@ impl Player {
                     nx = self.nx * _12 - self.ny * _12;
                     ny = self.ny * _12 + self.nx * _12;
                 }
-                if input.key[key!(A)] && input.key[key!(D)] {
+                if input.key[key!(A)] && input.key[key!(D)] || matches!(self.linetype, LineType::Ice) {
                     nx = self.nx * _12;
                     ny = self.ny * _12;
                 }
@@ -271,21 +271,35 @@ impl Player {
     }
 
     pub fn render(&self, assets: &Vec<Texture2D>) {
+        let mut seed: u64 = 0;
+        for char in self.username.chars().into_iter() {
+            seed = seed.rotate_left(4);
+            seed |= char as u64;
+        }
+        rand::srand(seed);
+        let mut color1 = Color::from_hex(rand::rand());
+        let mut color2 = Color::from_hex(rand::rand());
+        color1.r = color1.r * 0.5 + 0.5;
+        color1.g = color1.g * 0.5 + 0.5;
+        color1.b = color1.b * 0.5 + 0.5;
+        color2.r = color2.r * 0.5 + 0.5;
+        color2.g = color2.g * 0.5 + 0.5;
+        color2.b = color2.b * 0.5 + 0.5;
         // draw_rectangle(self.x as f32 - 8.0, self.y as f32 - 8.0, 16.0, 16.0, BLUE)
-        draw_text(&self.username, self.x as f32 - 4.0, self.y as f32 - 12.0, 8.0, BLUE);
+        draw_text(&self.username, self.x as f32 - 4.0, self.y as f32 - 12.0, 8.0, SKYBLUE);
         if self.hold.is_some() {
-            draw_texture_ex(&assets[0], self.x as f32 - 8.0, self.y as f32 - 8.0, WHITE, DrawTextureParams {
+            draw_texture_ex(&assets[0], self.x as f32 - 8.0, self.y as f32 - 8.0, color1, DrawTextureParams {
                 source: Some(Rect { x: 0.0, y: 0.0, w: 16.0, h: 16.0 }),
                 ..Default::default()
             });
         }
         else {
-            draw_texture_ex(&assets[0], self.x as f32 - 8.0, self.y as f32 - 8.0, WHITE, DrawTextureParams {
+            draw_texture_ex(&assets[0], self.x as f32 - 8.0, self.y as f32 - 8.0, color1, DrawTextureParams {
                 source: Some(Rect { x: 0.0, y: 16.0, w: 16.0, h: 16.0 }),
                 ..Default::default()
             });
         }
-        draw_texture_ex(&assets[0], self.x as f32 - 8.0, self.y as f32 - 8.0, WHITE, DrawTextureParams {
+        draw_texture_ex(&assets[0], self.x as f32 - 8.0, self.y as f32 - 8.0, color2, DrawTextureParams {
             source: Some(Rect { x: 16.0, y: 0.0, w: 16.0, h: 16.0 }),
             rotation: self.ny.atan2(self.nx) as f32,
             ..Default::default()

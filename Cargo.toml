@@ -2,6 +2,7 @@
 name = "multi_platformer"
 version = "0.1.0"
 edition = "2021"
+include = ["/src", "/assets/**", "/assets"]
 
 [dependencies]
 bincode = "1.3.3"

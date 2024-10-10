@@ -14,7 +14,6 @@ mod startarea;
 use std::env::args;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::os::unix::net;
 use std::time::{Instant, SystemTime};
 use std::{io, thread};
 use std::{collections::HashMap, sync::atomic::AtomicU64};
@@ -69,27 +68,41 @@ pub enum NetData {
     World { data: (HashMap<u64, Player>, HashMap<u64, Platform>, HashMap<u64, Stone>, HashMap<u64, Damage>, HashMap<u64, Cannon>, HashMap<u64, Path>, bool, Startarea) },
     Id { id: u64 },
     Denial,
+    RequestWorld,
+    Player { id: String, player: Player },
+    Inputs { inputs: HashMap<u64, Input> }
 }
 
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut client = true;
-    let mut port = 0;
+    let mut client_ip = "".to_owned();
+    let mut server_ip = "".to_owned();
     let mut username = String::new();
+    if args().len() == 0 {
+        eprintln!("Error: run with `<program> u<username> i127.0.0.1:3400 (q<server name> or s)`")
+    }
     for arg in args() {
         if arg == "s" {
             client = false;
-        }
-        if let Ok(id) = arg.parse::<u16>()  {
-            port = id;
         }
         if arg.chars().nth(0) == Some('u') {
             let (_, uname) = arg.split_at(1);
             username = uname.to_owned();
         }
+        if arg.chars().nth(0) == Some('i') {
+            let (_, uname) = arg.split_at(1);
+            client_ip = uname.to_string();
+        }
+        if arg.chars().nth(0) == Some('q') {
+            let (_, uname) = arg.split_at(1);
+            // server_ip = uname.to_string()
+            server_ip = uname.to_string();
+        }
     }
 
-    let mut input = Input::new();
+    let mut inputs = HashMap::new();
+    inputs.insert(username.clone(), Input::new());
     let mut client_down = vec![];
     let mut client_up = vec![];
     let mut scene = Scene::Start;
@@ -105,7 +118,7 @@ async fn main() {
     let mut paths = HashMap::new();
     let mut player_id = new_id();
     players.insert(player_id, Player::new(username.clone(), 0.0, 0.0));
-    LevelLoader::load(0, client, username.clone(), None, &mut platforms, &mut stones, &mut cannons, &mut damages, &mut paths);
+    LevelLoader::load(0, client, username.clone(), None, &server_ip, &mut platforms, &mut stones, &mut cannons, &mut damages, &mut paths);
     
     let mut entities: Entities = Entities(HashMap::new());
 
@@ -118,13 +131,15 @@ async fn main() {
     let mut dt = 0;
     let fps = 240;
     let mut ticks = 0;
+    let mut ticks1 = 0;
+    
     let assets = vec![
-        load_texture("assets/player.png").await.unwrap(),
-        load_texture("assets/stone.png").await.unwrap(),
-        load_texture("assets/cannon.png").await.unwrap(),
-        load_texture("assets/orb.png").await.unwrap(),
-        load_texture("assets/levels/level1/level1.png").await.unwrap(),
-        load_texture("assets/levels/level1/background.png").await.unwrap(),
+        Texture2D::from_file_with_format(include_bytes!("../assets/player.png"), Some(ImageFormat::Png)),
+        Texture2D::from_file_with_format(include_bytes!("../assets/stone.png"), Some(ImageFormat::Png)),
+        Texture2D::from_file_with_format(include_bytes!("../assets/cannon.png"), Some(ImageFormat::Png)),
+        Texture2D::from_file_with_format(include_bytes!("../assets/orb.png"), Some(ImageFormat::Png)),
+        Texture2D::from_file_with_format(include_bytes!("../assets/levels/level1/level1.png"), Some(ImageFormat::Png)),
+        Texture2D::from_file_with_format(include_bytes!("../assets/levels/level1/background.png"), Some(ImageFormat::Png)),
     ];
 
     for asset in &assets {
@@ -133,15 +148,12 @@ async fn main() {
     
     // let mut fullscreen = true;
 
-    let socket = if client { 
-        UdpSocket::bind(format!("127.0.0.1:{}", port))
-    } 
-    else {
-        UdpSocket::bind("127.0.0.1:3400")
+    let socket = { 
+        UdpSocket::bind(client_ip)
     }.expect("12");
     socket.set_nonblocking(true).unwrap();
 
-    let mut clients = HashMap::new();
+    let mut clients: HashMap<String, (SocketAddr, u64)> = HashMap::new();
 
     loop {
         // input.input();
@@ -225,10 +237,9 @@ async fn main() {
                                     if !clients.contains_key(&id) {
                                         let client_id = new_id();
                                         players.insert(client_id, Player::new(id.clone(), stpos.0, stpos.1));
-                                        clients.insert(id.clone(), client_id);
+                                        clients.insert(id.clone(), (src, client_id));
                                         socket.send_to(&bincode::serialize(&NetData::Id { id: client_id }).unwrap(), src).unwrap();
                                     }
-                                    // let client_id = clients.get(&client).unwrap();
                                     socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();
                                 }
                                 else {
@@ -236,15 +247,26 @@ async fn main() {
                                 }
                             },
                             NetData::Input { id, down, up } => {
-                                if let Some(client_id) = clients.get(&id) {
+                                if let Some((_, client_id)) = clients.get(&id) {
                                     let client = players.get_mut(client_id).unwrap();
                                     client.input.set(&down, &up);
-                                    socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();
                                 }
                             }
+                            NetData::RequestWorld => {
+                                socket.send_to(&bincode::serialize(&world).unwrap(), src).unwrap();
+                            },
+                            NetData::Player { id, player } => {
+                                if let Some(id) = clients.get(&id) {
+                                    players.insert(id.clone().1, player);
+                                }
+                            },
                             _ => {}
                         }
                     }
+                }
+                let inputs = players.iter().map(|(id, x)| (*id, x.input.clone())).collect::<HashMap<_, _>>();
+                for (_, (addr, client)) in clients.iter_mut() {
+                    socket.send_to(&bincode::serialize(&NetData::Inputs { inputs: inputs.clone() }).unwrap(), addr.clone()).unwrap();
                 }
             }
             else {
@@ -259,7 +281,15 @@ async fn main() {
                         let netdata: NetData = bincode::deserialize(&buf).unwrap();
                         match netdata {
                             NetData::World { data } => {
-                                (players, platforms, stones, damages, cannons, paths, start, startarea) = data;
+                                let players1;
+                                (players1, platforms, stones, damages, cannons, paths, start, startarea) = data;
+                                if let Some(player1) = players.get_mut(&player_id).cloned() {
+                                    players = players1;
+                                    players.insert(player_id, player1);
+                                }
+                                else {
+                                    players = players1;
+                                }
                             },
                             NetData::Id { id } => {
                                 player_id = id;
@@ -267,6 +297,15 @@ async fn main() {
                             NetData::Denial => {
                                 scene = Scene::Start;
                             },
+                            NetData::Inputs { inputs } => {
+                                for (id, input) in inputs {
+                                    if id != player_id {
+                                        if let Some(player) = players.get_mut(&id) {
+                                            player.input = input;
+                                        }
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -274,12 +313,20 @@ async fn main() {
                 
                 if let Scene::Gameplay = scene {
                     let id = NetData::Input { id: username.clone(), down: client_down.clone(), up: client_up.clone() };
-                    socket.send_to(&bincode::serialize(&id).unwrap(), "127.0.0.1:3400").unwrap(); 
+                    socket.send_to(&bincode::serialize(&id).unwrap(), &server_ip).unwrap_or(0); 
+                    if ticks1 % 32 == 0 {
+                        socket.send_to(&bincode::serialize(&NetData::RequestWorld).unwrap(), &server_ip).unwrap_or(0);
+                    }
+                    if ticks1 % 12 == 0 {
+                        if let Some(player) = players.get(&player_id) {
+                            socket.send_to(&bincode::serialize(&NetData::Player { id: username.clone(), player: player.clone() }).unwrap(), &server_ip).unwrap_or(0);
+                        }
+                    }
                 }
             }
             client_down.clear();
             client_up.clear();
-            input.update();
+            // input.update();
 
             i += 1;
             if i > 8 {
@@ -291,6 +338,7 @@ async fn main() {
                     ticks += 1;
                 }
             }
+            ticks1 += 1;
         }
 
         
@@ -327,6 +375,11 @@ async fn main() {
         //     draw_circle(x as f32, y as f32, 4.0, MAGENTA);
         // }
 
+        if is_mouse_button_pressed(MouseButton::Left) {
+            let (x, y) = mouse_position();
+            println!("({}.0, {}.0),", (x / 2.0 - 128.0).round(), -(96.0 - (y / 2.0 + players.get(&player_id).unwrap().cam as f32)).round());
+        }
+
         set_camera(&Camera2D {
             target: vec2(0.0, 0.0),
             render_target: Some(target.clone()),
@@ -334,20 +387,27 @@ async fn main() {
             ..Default::default()
         });
 
+        match scene {
+            Scene::Start | Scene::End { .. } => {
+                draw_rectangle(-128.0, -96.0, 256.0, 192.0, Color::new(0.0, 0.0, 0.0, 0.5));
+            }
+            _ => {}
+        }
+        
         if let Scene::Start = scene { } else {
             startarea.ui(&start);
         }
-        UI::ui(&mut scene, &mut ticks, &client);
+        UI::ui(&mut scene, &mut ticks, &client, &username);
         if let Scene::Restart{ level } = scene {
             scene = Scene::Gameplay;
             players.clear();
             player_id = new_id();
-            LevelLoader::load(0, client, username.clone(), Some(&socket), &mut platforms, &mut stones, &mut cannons, &mut damages, &mut paths);
-            let (x, y) = LevelLoader::load(level, client, username.clone(), Some(&socket), &mut platforms, &mut stones, &mut cannons, &mut damages, &mut paths);
+            LevelLoader::load(0, client, username.clone(), Some(&socket), &server_ip, &mut platforms, &mut stones, &mut cannons, &mut damages, &mut paths);
+            let (x, y) = LevelLoader::load(level, client, username.clone(), Some(&socket), &server_ip, &mut platforms, &mut stones, &mut cannons, &mut damages, &mut paths);
             stpos = (x, y);
             players.insert(player_id, Player::new(username.clone(), x, y));
             start = true;
-            startarea = Startarea::new(x - 32.0, y - 12.0, 64.0, 24.0);
+            startarea = Startarea::new(x / 2.0 - 32.0, y - 12.0, 64.0, 24.0);
         }
 
         set_default_camera();

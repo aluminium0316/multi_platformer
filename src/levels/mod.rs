@@ -10,7 +10,7 @@ type H<'a, T> = &'a mut HashMap<u64, T>;
 pub type E<'a> = (H<'a, Platform>, H<'a, Stone>, H<'a, Cannon>);
 
 impl LevelLoader {
-    pub fn load(id: u32, client: bool, username: String, socket: Option<&UdpSocket>, platforms: H<Platform>, stones: H<Stone>, cannons: H<Cannon>, damages: H<Damage>, paths: H<Path>) -> (f64, f64) {
+    pub fn load(id: u32, client: bool, username: String, socket: Option<&UdpSocket>, server_ip: &str, platforms: H<Platform>, stones: H<Stone>, cannons: H<Cannon>, damages: H<Damage>, paths: H<Path>) -> (f64, f64) {
         if id == 0 {
             platforms.clear();
             stones.clear();
@@ -28,7 +28,7 @@ impl LevelLoader {
         else {
             if let Some(socket) = socket {
                 let id = NetData::Login { id: username };
-                socket.send_to(&bincode::serialize(&id).unwrap(), "127.0.0.1:3400").unwrap();
+                socket.send_to(&bincode::serialize(&id).unwrap(), server_ip).unwrap();
             }
             (0.0, 0.0)
         }
